@@ -619,16 +619,47 @@ type Config struct {
 	HostPort   string
 	ListenAddr string
 	Timeout    time.Duration
+	EnableTLS  bool
 }
 
 type Server struct {
 	Config
 	Dialer proxy.Dialer
+
+	Host      string
+	Port      string
+	BasicAuth string
+
+	tcpURL string
+	udpURL string
 }
 
 func (srv *Server) Serve(cfg Config) error {
 	srv.Config = cfg
 	srv.Dialer = proxy.FromEnvironment()
+
+	host, port, err := net.SplitHostPort(cfg.HostPort)
+	if err != nil {
+		return fmt.Errorf("split host port error: %w", err)
+	}
+	srv.Host = host
+	srv.Port = port
+
+	if srv.Auth.User == "" {
+		if srv.Auth.Password != "" {
+			return fmt.Errorf("username and password error: %s:%s", srv.Auth.User, srv.Auth.Password)
+		}
+	} else {
+		if srv.Auth.Password == "" {
+			return fmt.Errorf("username and password error: %s:%s", srv.Auth.User, srv.Auth.Password)
+		} else {
+			srv.BasicAuth = "basic " + base64.StdEncoding.EncodeToString([]byte(cfg.Auth.User+":"+cfg.Auth.Password))
+		}
+	}
+
+	srv.tcpURL = fmt.Sprintf("https://%s", srv.HostPort)
+	srv.udpURL = fmt.Sprintf("https://%s/.well-known/masque/udp/*/*/", srv.HostPort)
+
 	srv.ServeTProxy()
 	return nil
 }
@@ -762,25 +793,22 @@ func (srv Server) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	host, _, err := net.SplitHostPort(srv.HostPort)
-	if err != nil {
-		cc.Close()
-		return nil, err
-	}
-
-	conn := net.Conn(tls.Client(cc, &tls.Config{
-		ServerName: host,
-	}))
+	conn := func() net.Conn {
+		if srv.EnableTLS {
+			return net.Conn(tls.Client(cc, &tls.Config{ServerName: srv.Host}))
+		}
+		return cc
+	}()
 	switch network {
 	case "tcp":
-		conn, err = srv.dialTCP(conn, addr, srv.Auth)
+		conn, err = srv.dialTCP(conn, addr)
 		if err != nil {
 			cc.Close()
 			return nil, fmt.Errorf("dial tcp error: %w", err)
 		}
 		return conn, nil
 	case "udp":
-		conn, err = srv.dialUDP(conn, addr, srv.Auth)
+		conn, err = srv.dialUDP(conn, addr)
 		if err != nil {
 			cc.Close()
 			return nil, fmt.Errorf("dial udp error: %w", err)
@@ -792,14 +820,14 @@ func (srv Server) Dial(network, addr string) (net.Conn, error) {
 	}
 }
 
-func (srv Server) dialTCP(conn net.Conn, addr string, auth proxy.Auth) (net.Conn, error) {
-	req, err := http.NewRequest(http.MethodConnect, fmt.Sprintf("https://%s", srv.HostPort), nil)
+func (srv Server) dialTCP(conn net.Conn, addr string) (net.Conn, error) {
+	req, err := http.NewRequest(http.MethodConnect, srv.tcpURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request error: %w", err)
 	}
 	req.URL.Opaque = addr
-	req.Header.Add("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(auth.User+":"+auth.Password)))
-	req.Header.Add("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(auth.User+":"+auth.Password)))
+	req.Header.Add("Authorization", srv.BasicAuth)
+	req.Header.Add("Proxy-Authorization", srv.BasicAuth)
 
 	err = req.WriteProxy(conn)
 	if err != nil {
@@ -816,18 +844,18 @@ func (srv Server) dialTCP(conn net.Conn, addr string, auth proxy.Auth) (net.Conn
 	return conn, nil
 }
 
-func (srv Server) dialUDP(conn net.Conn, _ string, auth proxy.Auth) (net.Conn, error) {
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("https://%s/.well-known/masque/udp/*/*/", srv.HostPort), nil)
+func (srv Server) dialUDP(conn net.Conn, _ string) (net.Conn, error) {
+	req, err := http.NewRequest(http.MethodGet, srv.udpURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request error: %w", err)
 	}
 	req.Header.Add("Connection", "Upgrade")
 	req.Header.Add("Upgrade", "connect-udp")
-	req.Header.Add("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(auth.User+":"+auth.Password)))
-	req.Header.Add("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(auth.User+":"+auth.Password)))
+	req.Header.Add("Authorization", srv.BasicAuth)
+	req.Header.Add("Proxy-Authorization", srv.BasicAuth)
 	req.Header.Add("Connect-Udp-Bind", ConnectUDPBindHeaderValue)
 
-	err = req.Write(conn)
+	err = req.WriteProxy(conn)
 	if err != nil {
 		return nil, fmt.Errorf("write request error: %w", err)
 	}

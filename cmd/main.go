@@ -16,7 +16,8 @@ func Main() {
 	flag.StringVar(&cfg.ListenAddr, "listen", "127.0.0.1:7789", "tproxy listen address: host:port")
 	flag.StringVar(&cfg.Auth.User, "user", "test", "proxy server user name")
 	flag.StringVar(&cfg.Auth.Password, "password", "test1234", "proxy server password")
-	flag.DurationVar(&cfg.Timeout, "timeout", time.Minute*3, "UDP timeout")
+	flag.DurationVar(&cfg.Timeout, "timeout", time.Minute*3, "timeout duration for UDP connection")
+	flag.BoolVar(&cfg.EnableTLS, "tls", false, "use tls to connect proxy server")
 	flag.Parse()
 
 	slog.Info("start ttproxy: a transparent proxy client")
