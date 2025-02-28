@@ -495,6 +495,7 @@ func (rm *natmap) Del(addr netip.AddrPort) {
 
 func (rm *natmap) timedCopy(pc *PacketConn, raddr netip.AddrPort, timeout time.Duration, b []byte) {
 	nm := map[netip.AddrPort]*net.UDPConn{}
+	mm := map[uint64]*net.UDPConn{}
 
 	dg := Datagram{}
 	for {
@@ -508,6 +509,7 @@ func (rm *natmap) timedCopy(pc *PacketConn, raddr netip.AddrPort, timeout time.D
 
 		switch dg.Type {
 		case 0:
+			var rc *net.UDPConn
 			var pkt []byte
 			var addr netip.AddrPort
 
@@ -534,37 +536,43 @@ func (rm *natmap) timedCopy(pc *PacketConn, raddr netip.AddrPort, timeout time.D
 				default:
 					return
 				}
+
+				var ok bool
+				rc, ok = nm[addr]
+				if !ok {
+					var err error
+					rc, err = tproxy.DialUDP("udp", net.UDPAddrFromAddrPort(addr), net.UDPAddrFromAddrPort(raddr))
+					if err != nil {
+						return
+					}
+					defer rc.Close()
+
+					nm[addr] = rc
+					if id, ok := pc.GetContextID(addr); ok {
+						mm[id] = rc
+					}
+				}
 			} else {
 				pkt = bb[nr:]
 
 				var ok bool
-				addr, ok = pc.GetAddr(id)
+				rc, ok = mm[id]
 				if !ok {
-					continue
-				}
-			}
+					addr, ok = pc.GetAddr(id)
+					if !ok {
+						continue
+					} else {
+						var err error
+						rc, err = tproxy.DialUDP("udp", net.UDPAddrFromAddrPort(addr), net.UDPAddrFromAddrPort(raddr))
+						if err != nil {
+							return
+						}
+						defer rc.Close()
 
-			rc, ok := nm[addr]
-			if !ok {
-				var err error
-				rc, err = func(addr, raddr string) (*net.UDPConn, error) {
-					udpAddr, err := net.ResolveUDPAddr("udp", addr)
-					if err != nil {
-						return nil, err
+						nm[addr] = rc
+						mm[id] = rc
 					}
-					rUDPAddr, err := net.ResolveUDPAddr("udp", raddr)
-					if err != nil {
-						return nil, err
-					}
-					conn, err := tproxy.DialUDP("udp", udpAddr, rUDPAddr)
-					return conn, err
-				}(addr.String(), raddr.String())
-				if err != nil {
-					return
 				}
-				defer rc.Close()
-
-				nm[addr] = rc
 			}
 
 			_, err = rc.Write(pkt)
