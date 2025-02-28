@@ -16,8 +16,9 @@ import (
 
 	"github.com/dunglas/httpsfv"
 	"github.com/imgk/go-tproxy"
-	"github.com/quic-go/quic-go/quicvarint"
 	"golang.org/x/net/proxy"
+
+	"github.com/imgk/ttproxy/pkg/quicvarint"
 )
 
 const (
