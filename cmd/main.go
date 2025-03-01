@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"flag"
+	"fmt"
 	"log/slog"
+	"os"
+	"os/signal"
 	"time"
 
 	"github.com/imgk/ttproxy"
@@ -18,9 +21,18 @@ func Main() {
 	flag.StringVar(&cfg.Auth.Password, "password", "test1234", "proxy server password")
 	flag.DurationVar(&cfg.Timeout, "timeout", time.Minute*3, "timeout duration for UDP connection")
 	flag.BoolVar(&cfg.EnableTLS, "tls", false, "use tls to connect proxy server")
+	flag.BoolVar(&cfg.PProf, "pprof", false, "enable net/http/pprof")
 	flag.Parse()
 
 	slog.Info("start ttproxy: a transparent proxy client")
-	(&ttproxy.Server{}).Serve(cfg)
+	if err := (&ttproxy.Server{}).Serve(cfg); err != nil {
+		slog.Error(fmt.Sprintf("start tproxy error: %v", err))
+		return
+	}
+
+	sigint := make(chan os.Signal, 1)
+	signal.Notify(sigint, os.Interrupt)
+	<-sigint
+
 	slog.Info("close ttproxy: a transparent proxy client")
 }

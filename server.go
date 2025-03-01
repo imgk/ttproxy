@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	_ "net/http/pprof"
+
 	"github.com/dunglas/httpsfv"
 	"github.com/imgk/go-tproxy"
 	"golang.org/x/net/proxy"
@@ -629,6 +631,7 @@ type Config struct {
 	ListenAddr string
 	Timeout    time.Duration
 	EnableTLS  bool
+	PProf      bool
 }
 
 type Server struct {
@@ -669,17 +672,19 @@ func (srv *Server) Serve(cfg Config) error {
 	srv.tcpURL = fmt.Sprintf("https://%s", srv.HostPort)
 	srv.udpURL = fmt.Sprintf("https://%s/.well-known/masque/udp/*/*/", srv.HostPort)
 
+	if srv.PProf {
+		go http.ListenAndServe(":2025", nil)
+	}
+
 	srv.ServeTProxy()
 	return nil
 }
 
-func (srv Server) ServeTProxy() error {
+func (srv Server) ServeTProxy() {
 	slog.Info("start tproxy server")
 
 	go srv.ServeTProxyTCP()
-	srv.ServeTProxyUDP()
-
-	return nil
+	go srv.ServeTProxyUDP()
 }
 
 func (srv Server) ServeTProxyTCP() error {
@@ -716,10 +721,14 @@ func (srv Server) ServeTProxyTCP() error {
 			done := make(chan struct{})
 			go func() {
 				copyBuffer(rc, conn, make([]byte, 1024*16))
+				if cw, ok := rc.(interface{ CloseWrite() error }); ok {
+					cw.CloseWrite()
+				}
 				done <- struct{}{}
 			}()
 
 			copyBuffer(conn, rc, make([]byte, 1024*16))
+			conn.CloseWrite()
 			<-done
 		}()
 	}
@@ -802,12 +811,11 @@ func (srv Server) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	conn := func() net.Conn {
-		if srv.EnableTLS {
-			return net.Conn(tls.Client(cc, &tls.Config{ServerName: srv.Host}))
-		}
-		return cc
-	}()
+	conn := net.Conn(cc)
+	if srv.EnableTLS {
+		conn = net.Conn(tls.Client(cc, &tls.Config{ServerName: srv.Host}))
+	}
+
 	switch network {
 	case "tcp":
 		conn, err = srv.dialTCP(conn, addr)
