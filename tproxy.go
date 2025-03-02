@@ -1,0 +1,129 @@
+package ttproxy
+
+import (
+	"fmt"
+	"log/slog"
+	"net"
+
+	"github.com/imgk/go-tproxy"
+)
+
+func (srv Server) ServeTProxyTCP() error {
+	addr, err := net.ResolveTCPAddr("tcp", srv.TProxyAddr)
+	if err != nil {
+		return err
+	}
+	ln, err := tproxy.ListenTCP("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+
+	slog.Info(fmt.Sprintf("receive new connnection at %s", ln.Addr().String()))
+
+	for {
+		conn, err := ln.AcceptTProxy()
+		if err != nil {
+			break
+		}
+
+		slog.Info(fmt.Sprintf("receive new TCP connection %s <---> %s", conn.RemoteAddr().String(), conn.LocalAddr().String()))
+
+		go srv.relay(conn)
+	}
+
+	return nil
+}
+
+func (srv Server) relay(conn tproxy.Conn) {
+	defer conn.Close()
+
+	rc, err := srv.Dial("tcp", conn.LocalAddr().String())
+	if err != nil {
+		// slog.Error(fmt.Sprintf("dial TCP connnection to ---> %s, error: %s", conn.LocalAddr().String(), err.Error()))
+		return
+	}
+	defer rc.Close()
+
+	done := make(chan struct{})
+	go func() {
+		conn.WriteTo(rc)
+		// copyBuffer(rc, conn, make([]byte, 1024*16))
+		if cw, ok := rc.(interface{ CloseWrite() error }); ok {
+			cw.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
+
+	conn.ReadFrom(rc)
+	// copyBuffer(conn, rc, make([]byte, 1024*16))
+	conn.CloseWrite()
+	<-done
+}
+
+func (srv Server) ServeTProxyUDP() error {
+	addr, err := net.ResolveUDPAddr("udp", srv.TProxyAddr)
+	if err != nil {
+		return err
+	}
+	ln, err := tproxy.ListenUDP("udp", addr)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+
+	nm := newNatMap()
+	bb := make([]byte, 2048)
+
+	for {
+		n, addr, raddr, err := ln.ReadFromUDPAddrPortTProxy(bb)
+		if err != nil {
+			break
+		}
+
+		pc, ok := nm.Get(addr)
+		if ok {
+			if _, err := pc.WriteToUDPAddrPort(bb[:n], raddr); err != nil {
+				slog.Error(fmt.Sprintf("write from: %v to: %v error: %v", addr, raddr, err))
+			}
+			continue
+		}
+
+		slog.Info(fmt.Sprintf("receive new UDP connection %s <---> %s", addr.String(), raddr.String()))
+
+		conn, err := srv.Dial("udp", raddr.String())
+		if err != nil {
+			// slog.Error(fmt.Sprintf("dial UDP connnection to ---> %s, error: %s", raddr.String(), err.Error()))
+			continue
+		}
+
+		pc = newPacketConn(conn)
+
+		// enable firewall for UDP bind
+		dg := Datagram{
+			Type: CompressionCloseValue,
+		}
+		pl := &CompressionClosePayload{
+			ContextID: 2,
+		}
+		dg.Length = 1
+		dg.Payload = pl
+
+		err = pc.SendDatagram(dg)
+		if err != nil {
+			conn.Close()
+			continue
+		}
+
+		_, err = pc.WriteToUDPAddrPort(bb[:n], raddr)
+		if err != nil {
+			conn.Close()
+			continue
+		}
+
+		nm.Add(addr, pc)
+		go nm.timedCopy(pc, addr, srv.Timeout)
+	}
+
+	return nil
+}
