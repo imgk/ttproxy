@@ -16,7 +16,7 @@ func Main() {
 	cfg := ttproxy.Config{}
 
 	flag.StringVar(&cfg.HostPort, "server", "test.cc", "proxy server address: host:port")
-	flag.StringVar(&cfg.ListenAddr, "listen", "127.0.0.1:7789", "tproxy listen address: host:port")
+	flag.StringVar(&cfg.TProxyAddr, "tproxy", "127.0.0.1:7789", "tproxy listen address: host:port")
 	flag.StringVar(&cfg.Auth.User, "user", "test", "proxy server user name")
 	flag.StringVar(&cfg.Auth.Password, "password", "test1234", "proxy server password")
 	flag.DurationVar(&cfg.Timeout, "timeout", time.Minute*3, "timeout duration for UDP connection")

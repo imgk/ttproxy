@@ -4,13 +4,14 @@ import (
 	"bufio"
 	"crypto/tls"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,37 +46,6 @@ func init() {
 	}
 	CapsuleProtocolHeaderValue = str
 	ConnectUDPBindHeaderValue = str
-}
-
-func copyBuffer(w io.Writer, r io.Reader, buf []byte) (n int64, err error) {
-	for {
-		nr, er := r.Read(buf)
-		if nr > 0 {
-			nw, ew := w.Write(buf[0:nr])
-			if nw < 0 || nr < nw {
-				nw = 0
-				if ew == nil {
-					ew = errors.New("invalid write result")
-				}
-			}
-			n += int64(nw)
-			if ew != nil {
-				err = ew
-				break
-			}
-			if nr != nw {
-				err = io.ErrShortWrite
-				break
-			}
-		}
-		if er != nil {
-			if !errors.Is(er, io.EOF) {
-				err = er
-			}
-			break
-		}
-	}
-	return n, err
 }
 
 type Payload interface {
@@ -628,7 +598,7 @@ func (rm *natmap) timedCopy(pc *PacketConn, raddr netip.AddrPort, timeout time.D
 type Config struct {
 	Auth       proxy.Auth
 	HostPort   string
-	ListenAddr string
+	TProxyAddr string
 	Timeout    time.Duration
 	EnableTLS  bool
 	PProf      bool
@@ -648,9 +618,26 @@ type Server struct {
 
 func (srv *Server) Serve(cfg Config) error {
 	srv.Config = cfg
-	srv.Dialer = proxy.FromEnvironment()
 
-	host, port, err := net.SplitHostPort(cfg.HostPort)
+	srv.Dialer = proxy.Direct
+	if strs := strings.Split(srv.HostPort, ";"); len(strs) > 1 {
+		for _, vv := range strs[:len(strs)-1] {
+			uri, err := url.Parse(vv)
+			if err != nil {
+				return fmt.Errorf("parse uri: %v, error: %v", vv, err)
+			}
+
+			srv.Dialer, err = proxy.FromURL(uri, srv.Dialer)
+			if err != nil {
+				return fmt.Errorf("proxy from url: %v, error: %v", uri.String(), err)
+			}
+		}
+		srv.HostPort = strs[len(strs)-1]
+	} else {
+		srv.Dialer = proxy.FromEnvironment()
+	}
+
+	host, port, err := net.SplitHostPort(srv.HostPort)
 	if err != nil {
 		return fmt.Errorf("split host port error: %w", err)
 	}
@@ -665,7 +652,7 @@ func (srv *Server) Serve(cfg Config) error {
 		if srv.Auth.Password == "" {
 			return fmt.Errorf("username and password error: %s:%s", srv.Auth.User, srv.Auth.Password)
 		} else {
-			srv.BasicAuth = "basic " + base64.StdEncoding.EncodeToString([]byte(cfg.Auth.User+":"+cfg.Auth.Password))
+			srv.BasicAuth = "basic " + base64.StdEncoding.EncodeToString([]byte(srv.Auth.User+":"+srv.Auth.Password))
 		}
 	}
 
@@ -676,19 +663,18 @@ func (srv *Server) Serve(cfg Config) error {
 		go http.ListenAndServe(":2025", nil)
 	}
 
-	srv.ServeTProxy()
+	if srv.TProxyAddr != "" {
+		slog.Info("start tproxy server")
+
+		go srv.ServeTProxyTCP()
+		go srv.ServeTProxyUDP()
+	}
+
 	return nil
 }
 
-func (srv Server) ServeTProxy() {
-	slog.Info("start tproxy server")
-
-	go srv.ServeTProxyTCP()
-	go srv.ServeTProxyUDP()
-}
-
 func (srv Server) ServeTProxyTCP() error {
-	addr, err := net.ResolveTCPAddr("tcp", srv.ListenAddr)
+	addr, err := net.ResolveTCPAddr("tcp", srv.TProxyAddr)
 	if err != nil {
 		return err
 	}
@@ -708,36 +694,40 @@ func (srv Server) ServeTProxyTCP() error {
 
 		slog.Info(fmt.Sprintf("receive new TCP connection %s <---> %s", conn.RemoteAddr().String(), conn.LocalAddr().String()))
 
-		go func() {
-			defer conn.Close()
-
-			rc, err := srv.Dial("tcp", conn.LocalAddr().String())
-			if err != nil {
-				// slog.Error(fmt.Sprintf("dial TCP connnection to ---> %s, error: %s", conn.LocalAddr().String(), err.Error()))
-				return
-			}
-			defer rc.Close()
-
-			done := make(chan struct{})
-			go func() {
-				copyBuffer(rc, conn, make([]byte, 1024*16))
-				if cw, ok := rc.(interface{ CloseWrite() error }); ok {
-					cw.CloseWrite()
-				}
-				done <- struct{}{}
-			}()
-
-			copyBuffer(conn, rc, make([]byte, 1024*16))
-			conn.CloseWrite()
-			<-done
-		}()
+		go srv.relay(conn)
 	}
 
 	return nil
 }
 
+func (srv Server) relay(conn tproxy.Conn) {
+	defer conn.Close()
+
+	rc, err := srv.Dial("tcp", conn.LocalAddr().String())
+	if err != nil {
+		// slog.Error(fmt.Sprintf("dial TCP connnection to ---> %s, error: %s", conn.LocalAddr().String(), err.Error()))
+		return
+	}
+	defer rc.Close()
+
+	done := make(chan struct{})
+	go func() {
+		conn.WriteTo(rc)
+		// copyBuffer(rc, conn, make([]byte, 1024*16))
+		if cw, ok := rc.(interface{ CloseWrite() error }); ok {
+			cw.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
+
+	conn.ReadFrom(rc)
+	// copyBuffer(conn, rc, make([]byte, 1024*16))
+	conn.CloseWrite()
+	<-done
+}
+
 func (srv Server) ServeTProxyUDP() error {
-	addr, err := net.ResolveUDPAddr("udp", srv.ListenAddr)
+	addr, err := net.ResolveUDPAddr("udp", srv.TProxyAddr)
 	if err != nil {
 		return err
 	}
@@ -843,7 +833,7 @@ func (srv Server) dialTCP(conn net.Conn, addr string) (net.Conn, error) {
 		return nil, fmt.Errorf("request error: %w", err)
 	}
 	req.URL.Opaque = addr
-	req.Header.Add("Authorization", srv.BasicAuth)
+	// req.Header.Add("Authorization", srv.BasicAuth)
 	req.Header.Add("Proxy-Authorization", srv.BasicAuth)
 
 	err = req.WriteProxy(conn)
@@ -868,7 +858,7 @@ func (srv Server) dialUDP(conn net.Conn, _ string) (net.Conn, error) {
 	}
 	req.Header.Add("Connection", "Upgrade")
 	req.Header.Add("Upgrade", "connect-udp")
-	req.Header.Add("Authorization", srv.BasicAuth)
+	// req.Header.Add("Authorization", srv.BasicAuth)
 	req.Header.Add("Proxy-Authorization", srv.BasicAuth)
 	req.Header.Add("Connect-Udp-Bind", ConnectUDPBindHeaderValue)
 
