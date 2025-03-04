@@ -55,7 +55,7 @@ func (rm *natmap) timedCopy(pc *PacketConn, raddr netip.AddrPort, timeout time.D
 
 	for {
 		pc.SetReadDeadline(time.Now().Add(timeout))
-		nr, id, err := pc.ReadPacket(bb)
+		pkt, id, err := pc.ReadPacket(bb)
 		if err != nil {
 			break
 		}
@@ -80,7 +80,7 @@ func (rm *natmap) timedCopy(pc *PacketConn, raddr netip.AddrPort, timeout time.D
 		}
 
 		// slog.Info(fmt.Sprintf("write new packet to: %v", raddr))
-		_, err = rc.Write(bb[:nr])
+		_, err = rc.Write(pkt)
 		if err != nil {
 			return
 		}

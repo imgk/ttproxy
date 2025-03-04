@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/imgk/ttproxy/pkg/quicvarint"
@@ -21,6 +22,8 @@ type PacketConn struct {
 		sync.RWMutex
 		Map map[netip.AddrPort]uint64
 	}
+
+	firewall atomic.Bool
 }
 
 func newPacketConn(conn net.Conn) *PacketConn {
@@ -32,6 +35,48 @@ func newPacketConn(conn net.Conn) *PacketConn {
 
 func (nm *PacketConn) Close() error {
 	return nm.Conn.Close()
+}
+
+func (nm *PacketConn) SetFirewall(ok bool) error {
+	if ok {
+		// enable firewall for UDP bind
+		dg := Datagram{
+			Type: CompressionCloseValue,
+		}
+		pl := &CompressionClosePayload{
+			ContextID: 2,
+		}
+		dg.Length = 1
+		dg.Payload = pl
+
+		err := nm.SendDatagram(dg)
+		if err != nil {
+			return err
+		}
+	} else {
+		// disable firewall for UDP bind
+		dg := Datagram{
+			Type: CompressionAssignValue,
+		}
+		pl := &CompressionAssignPayload{
+			ContextID: 2,
+			IPVersion: 0,
+		}
+		dg.Length = 1
+		dg.Payload = pl
+
+		err := nm.SendDatagram(dg)
+		if err != nil {
+			return err
+		}
+	}
+
+	nm.firewall.Store(ok)
+	return nil
+}
+
+func (nm *PacketConn) Firewall() bool {
+	return nm.firewall.Load()
 }
 
 func (nm *PacketConn) GetAddr(id uint64) (netip.AddrPort, bool) {
@@ -120,12 +165,12 @@ func (pc *PacketConn) SetReadDeadline(time time.Time) error {
 	return pc.Conn.SetReadDeadline(time)
 }
 
-func (pc *PacketConn) ReadPacket(buf []byte) (int, uint64, error) {
+func (pc *PacketConn) ReadPacket(buf []byte) ([]byte, uint64, error) {
 	for {
 		dg := Datagram{}
 		err := dg.ReceiveBuffer(pc.Conn, buf)
 		if err != nil {
-			return 0, 0, err
+			return nil, 0, err
 		}
 
 		bb := dg.Payload.(*BytePayload).Payload
@@ -134,14 +179,73 @@ func (pc *PacketConn) ReadPacket(buf []byte) (int, uint64, error) {
 		case 0:
 			id, nr, err := quicvarint.Parse(bb)
 			if err != nil {
-				return 0, 0, err
-			}
-
-			if id == 2 {
 				continue
 			}
 
-			return nr, id, nil
+			// use 1 for server side
+			// use 2 for client side
+			if id != 1 {
+				return bb[nr:], id, nil
+			}
+
+			if pc.Firewall() {
+				continue
+			}
+
+			var (
+				pkt  []byte
+				addr netip.AddrPort
+			)
+			switch bb[1] {
+			case 4:
+				// nr = 1
+				pkt = bb[8:]
+				addr = netip.AddrPortFrom(netip.AddrFrom4(
+					[4]byte{bb[2], bb[3], bb[4], bb[5]}), uint16(bb[6])<<8|uint16(bb[7]))
+			case 6:
+				// nr = 1
+				pkt = bb[20:]
+				addr = netip.AddrPortFrom(netip.AddrFrom16(
+					[16]byte{bb[2], bb[3], bb[nr+4], bb[5],
+						bb[6], bb[7], bb[8], bb[9],
+						bb[10], bb[11], bb[12], bb[13],
+						bb[14], bb[15], bb[16], bb[17]}), uint16(bb[18])<<8|uint16(bb[19]))
+			default:
+				continue
+			}
+
+			id, ok := pc.GetContextID(addr)
+			if ok {
+				return pkt, id, nil
+			}
+
+			dg := Datagram{
+				Type: CompressionAssignValue,
+			}
+			pl := &CompressionAssignPayload{}
+
+			pc.ContextID += 2
+			pl.ContextID = pc.ContextID
+			if naddr := addr.Addr(); naddr.Is4() {
+				pl.IPVersion = 4
+				pl.Addr = naddr
+			} else {
+				pl.IPVersion = 6
+				pl.Addr = naddr
+			}
+			pl.Port = addr.Port()
+			dg.Length = pl.Len()
+			dg.Payload = pl
+
+			err = pc.SendDatagram(dg)
+			if err != nil {
+				return nil, 0, err
+			}
+
+			id = pl.ContextID
+			pc.Add(id, netip.AddrPortFrom(pl.Addr, pl.Port))
+
+			return pkt, id, nil
 		case CompressionAssignValue:
 			dg := Datagram{Type: CompressionAssignValue}
 			pl := CompressionAssignPayload{}

@@ -98,18 +98,7 @@ func (srv Server) ServeTProxyUDP() error {
 		}
 
 		pc = newPacketConn(conn)
-
-		// enable firewall for UDP bind
-		dg := Datagram{
-			Type: CompressionCloseValue,
-		}
-		pl := &CompressionClosePayload{
-			ContextID: 2,
-		}
-		dg.Length = 1
-		dg.Payload = pl
-
-		err = pc.SendDatagram(dg)
+		err = pc.SetFirewall(true)
 		if err != nil {
 			pc.Close()
 			continue
