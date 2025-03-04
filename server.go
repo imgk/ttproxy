@@ -1,6 +1,7 @@
 package ttproxy
 
 import (
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
@@ -78,6 +79,13 @@ func (srv *Server) Serve(cfg Config) error {
 
 	srv.tcpURL = fmt.Sprintf("https://%s", srv.HostPort)
 	srv.udpURL = fmt.Sprintf("https://%s/.well-known/masque/udp/*/*/", srv.HostPort)
+
+	if srv.EnableTLS {
+		srv.Dialer = &tlsDialer{
+			Dialer: srv.Dialer,
+			Config: tls.Config{ServerName: srv.Host},
+		}
+	}
 
 	if srv.PProf {
 		go http.ListenAndServe(":2025", nil)

@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"time"
 
 	"github.com/imgk/ttproxy/pkg/quicvarint"
 )
@@ -113,4 +114,75 @@ func (pc *PacketConn) WriteToUDPAddrPort(b []byte, raddr netip.AddrPort) (int, e
 	}
 
 	return len(b), nil
+}
+
+func (pc *PacketConn) SetReadDeadline(time time.Time) error {
+	return pc.Conn.SetReadDeadline(time)
+}
+
+func (pc *PacketConn) ReadPacket(buf []byte) (int, uint64, error) {
+	for {
+		dg := Datagram{}
+		err := dg.ReceiveBuffer(pc.Conn, buf)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		bb := dg.Payload.(*BytePayload).Payload
+
+		switch dg.Type {
+		case 0:
+			id, nr, err := quicvarint.Parse(bb)
+			if err != nil {
+				return 0, 0, err
+			}
+
+			if id == 2 {
+				continue
+			}
+
+			return nr, id, nil
+		case CompressionAssignValue:
+			dg := Datagram{Type: CompressionAssignValue}
+			pl := CompressionAssignPayload{}
+
+			err := pl.Parse(bb)
+			if err != nil {
+				continue
+			}
+			dg.Length = pl.Len()
+			dg.Payload = &pl
+
+			if pl.ContextID&1 == 1 {
+				// slog.Info(fmt.Sprintf("add new context id: %v, <---> addr: %v", pl.ContextID, netip.AddrPortFrom(pl.Addr, pl.Port)))
+				pc.Add(pl.ContextID, netip.AddrPortFrom(pl.Addr, pl.Port))
+
+				err = pc.SendDatagram(dg)
+				if err != nil {
+					continue
+				}
+			}
+		case CompressionCloseValue:
+			dg := Datagram{Type: CompressionCloseValue}
+			pl := CompressionClosePayload{}
+
+			err := pl.Parse(bb)
+			if err != nil {
+				continue
+			}
+			dg.Length = pl.Len()
+			dg.Payload = &pl
+
+			if pl.ContextID&1 == 1 {
+				// delete context id
+				pc.Del(pl.ContextID)
+
+				err = pc.SendDatagram(dg)
+				if err != nil {
+					continue
+				}
+			}
+		default:
+		}
+	}
 }

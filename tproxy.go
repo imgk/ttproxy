@@ -72,7 +72,7 @@ func (srv Server) ServeTProxyUDP() error {
 	}
 	defer ln.Close()
 
-	nm := newNatMap()
+	nm := newNatMap(srv.Timeout)
 	bb := make([]byte, 2048)
 
 	for {
@@ -111,18 +111,17 @@ func (srv Server) ServeTProxyUDP() error {
 
 		err = pc.SendDatagram(dg)
 		if err != nil {
-			conn.Close()
+			pc.Close()
 			continue
 		}
 
 		_, err = pc.WriteToUDPAddrPort(bb[:n], raddr)
 		if err != nil {
-			conn.Close()
+			pc.Close()
 			continue
 		}
 
 		nm.Add(addr, pc)
-		go nm.timedCopy(pc, addr, srv.Timeout)
 	}
 
 	return nil
