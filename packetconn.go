@@ -206,7 +206,7 @@ func (pc *PacketConn) ReadPacket(buf []byte) ([]byte, uint64, error) {
 				// nr = 1
 				pkt = bb[20:]
 				addr = netip.AddrPortFrom(netip.AddrFrom16(
-					[16]byte{bb[2], bb[3], bb[nr+4], bb[5],
+					[16]byte{bb[2], bb[3], bb[4], bb[5],
 						bb[6], bb[7], bb[8], bb[9],
 						bb[10], bb[11], bb[12], bb[13],
 						bb[14], bb[15], bb[16], bb[17]}), uint16(bb[18])<<8|uint16(bb[19]))
