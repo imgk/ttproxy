@@ -62,7 +62,7 @@ func (nm *PacketConn) SetFirewall(ok bool) error {
 			ContextID: 2,
 			IPVersion: 0,
 		}
-		dg.Length = 1
+		dg.Length = 2
 		dg.Payload = pl
 
 		err := nm.SendDatagram(dg)
