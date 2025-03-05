@@ -198,11 +198,6 @@ func (data *CompressionAssignPayload) Parse(b []byte) error {
 
 	switch b[nr] { // IPVersion
 	case 0:
-		if id != 2 {
-			// use 2 for default uncompressed context id
-			return fmt.Errorf("cannot use context id: %v as uncomressed id", id)
-		}
-
 		data.IPVersion = 0
 	case 4:
 		data.IPVersion = 4

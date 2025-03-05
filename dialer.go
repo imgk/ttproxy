@@ -3,9 +3,11 @@ package ttproxy
 import (
 	"bufio"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 
 	"github.com/dunglas/httpsfv"
 	"golang.org/x/net/proxy"
@@ -33,6 +35,61 @@ func init() {
 	}
 	CapsuleProtocolHeaderValue = str
 	ConnectUDPBindHeaderValue = str
+
+	proxy.RegisterDialerType("https", newHTTPDialer)
+}
+
+type httpDialer struct {
+	proxy.Dialer
+
+	HostPort  string
+	BasicAuth string
+
+	tcpURL string
+}
+
+func newHTTPDialer(uri *url.URL, d proxy.Dialer) (proxy.Dialer, error) {
+	dialer := &httpDialer{Dialer: d, HostPort: uri.Host}
+	if user := uri.User.Username(); user != "" {
+		if password, ok := uri.User.Password(); ok && password != "" {
+			dialer.BasicAuth = "basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+password))
+		} else {
+			return nil, fmt.Errorf("user name: %v and password: %v error", user, password)
+		}
+	}
+	dialer.tcpURL = fmt.Sprintf("https://%s", dialer.HostPort)
+	return dialer, nil
+}
+
+func (d *httpDialer) Dial(network, addr string) (net.Conn, error) {
+	conn, err := d.Dialer.Dial("tcp", d.HostPort)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodConnect, d.tcpURL, nil)
+	if err != nil {
+		return conn, fmt.Errorf("request error: %w", err)
+	}
+	req.URL.Opaque = addr
+	// req.Header.Add("Authorization", srv.BasicAuth)
+	if d.BasicAuth != "" {
+		req.Header.Add("Proxy-Authorization", d.BasicAuth)
+	}
+
+	err = req.WriteProxy(conn)
+	if err != nil {
+		return conn, fmt.Errorf("write request error: %w", err)
+	}
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		return conn, fmt.Errorf("read response error: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return conn, fmt.Errorf("server status code error: %v", resp.StatusCode)
+	}
+	return conn, nil
 }
 
 type tlsDialer struct {
