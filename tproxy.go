@@ -19,7 +19,7 @@ func (srv Server) ServeTProxyTCP() error {
 	}
 	defer ln.Close()
 
-	slog.Info(fmt.Sprintf("receive new connnection at %s", ln.Addr().String()))
+	slog.Info(fmt.Sprintf("receive new tproxy connnection at %s", ln.Addr().String()))
 
 	for {
 		conn, err := ln.AcceptTProxy()
@@ -27,7 +27,7 @@ func (srv Server) ServeTProxyTCP() error {
 			break
 		}
 
-		slog.Info(fmt.Sprintf("receive new TCP connection %s <---> %s", conn.RemoteAddr().String(), conn.LocalAddr().String()))
+		slog.Info(fmt.Sprintf("receive new tproxy TCP connection %s <---> %s", conn.RemoteAddr().String(), conn.LocalAddr().String()))
 
 		go srv.relay(conn)
 	}
@@ -89,7 +89,7 @@ func (srv Server) ServeTProxyUDP() error {
 			continue
 		}
 
-		slog.Info(fmt.Sprintf("receive new UDP connection %s <---> %s", addr.String(), raddr.String()))
+		slog.Info(fmt.Sprintf("receive new tproxy UDP connection %s <---> %s", addr.String(), raddr.String()))
 
 		conn, err := srv.Dial("udp", raddr.String())
 		if err != nil {

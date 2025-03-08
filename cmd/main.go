@@ -22,6 +22,7 @@ func Main() {
 	flag.DurationVar(&cfg.Timeout, "timeout", time.Minute*3, "timeout duration for UDP connection")
 	flag.BoolVar(&cfg.EnableTLS, "tls", false, "use tls to connect proxy server")
 	flag.BoolVar(&cfg.PProf, "pprof", false, "enable net/http/pprof")
+	flag.StringVar(&cfg.HTTPAddr, "httpproxy", "", "enable http proxy")
 	flag.Parse()
 
 	slog.Info("start ttproxy: a transparent proxy client")

@@ -7,11 +7,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"net/url"
 	"strings"
 	"time"
-
-	_ "net/http/pprof"
 
 	"golang.org/x/net/proxy"
 )
@@ -23,6 +22,7 @@ type Config struct {
 	Timeout    time.Duration
 	EnableTLS  bool
 	PProf      bool
+	HTTPAddr   string
 }
 
 type Server struct {
@@ -35,6 +35,9 @@ type Server struct {
 
 	tcpURL string
 	udpURL string
+
+	httpServer *http.Server
+	httpMux    *http.ServeMux
 }
 
 func (srv *Server) Serve(cfg Config) error {
@@ -87,8 +90,36 @@ func (srv *Server) Serve(cfg Config) error {
 		}
 	}
 
-	if srv.PProf {
-		go http.ListenAndServe(":2025", nil)
+	if srv.PProf || srv.HTTPAddr != "" {
+		// go http.ListenAndServe(":2025", nil)
+		slog.Info("start http proxy server")
+
+		addr := srv.HTTPAddr
+		if addr == "" {
+			addr = ":2025"
+		}
+
+		p := new(http.Protocols)
+		p.SetHTTP1(true)
+		p.SetHTTP2(true)
+		p.SetUnencryptedHTTP2(true)
+
+		srv.httpServer = &http.Server{
+			Addr:      addr,
+			Handler:   srv,
+			Protocols: p,
+		}
+
+		srv.httpMux = http.NewServeMux()
+		if srv.PProf {
+			srv.httpMux.HandleFunc("/debug/pprof/", pprof.Index)
+			srv.httpMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+			srv.httpMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+			srv.httpMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+			srv.httpMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		}
+
+		go srv.httpServer.ListenAndServe()
 	}
 
 	if srv.TProxyAddr != "" {
