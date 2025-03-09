@@ -9,33 +9,25 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/dunglas/httpsfv"
 	"golang.org/x/net/proxy"
 )
 
 const (
 	RequestProtocol = "connect-udp"
 
+	CapsuleProtocolHeader    = "Capsule-Protocol"
 	ConnectUDPBindHeader     = "Connect-Udp-Bind"
+	ProxyAuthorizationHeader = "Proxy-Authorization"
 	ProxyPublicAddressHeader = "Proxy-Public-Address"
+
+	CapsuleProtocolHeaderValue = "?1"
+	ConnectUDPBindHeaderValue  = "?1"
 
 	CompressionAssignValue = 0x1C0FE323
 	CompressionCloseValue  = 0x1C0FE324
 )
 
-var (
-	CapsuleProtocolHeaderValue string
-	ConnectUDPBindHeaderValue  string
-)
-
 func init() {
-	str, err := httpsfv.Marshal(httpsfv.NewItem(true))
-	if err != nil {
-		panic(fmt.Sprintf("failed to marshal capsule protocol header value: %v", err))
-	}
-	CapsuleProtocolHeaderValue = str
-	ConnectUDPBindHeaderValue = str
-
 	proxy.RegisterDialerType("https", newHTTPDialer)
 }
 
@@ -138,8 +130,9 @@ func (srv Server) dialTCP(conn net.Conn, addr string) (net.Conn, error) {
 		return conn, fmt.Errorf("request error: %w", err)
 	}
 	req.URL.Opaque = addr
-	// req.Header.Add("Authorization", srv.BasicAuth)
-	req.Header.Add("Proxy-Authorization", srv.BasicAuth)
+	if srv.BasicAuth != "" {
+		req.Header.Add(ProxyAuthorizationHeader, srv.BasicAuth)
+	}
 
 	err = req.WriteProxy(conn)
 	if err != nil {
@@ -162,10 +155,12 @@ func (srv Server) dialUDP(conn net.Conn, _ string) (net.Conn, error) {
 		return conn, fmt.Errorf("request error: %w", err)
 	}
 	req.Header.Add("Connection", "Upgrade")
-	req.Header.Add("Upgrade", "connect-udp")
-	// req.Header.Add("Authorization", srv.BasicAuth)
-	req.Header.Add("Proxy-Authorization", srv.BasicAuth)
-	req.Header.Add("Connect-Udp-Bind", ConnectUDPBindHeaderValue)
+	req.Header.Add("Upgrade", RequestProtocol)
+	if srv.BasicAuth != "" {
+		req.Header.Add(ProxyAuthorizationHeader, srv.BasicAuth)
+	}
+	req.Header.Add(CapsuleProtocolHeader, CapsuleProtocolHeaderValue)
+	req.Header.Add(ConnectUDPBindHeader, ConnectUDPBindHeaderValue)
 
 	err = req.WriteProxy(conn)
 	if err != nil {
