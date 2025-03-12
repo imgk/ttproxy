@@ -11,6 +11,8 @@ import (
 
 type Payload interface {
 	Send(io.Writer) error
+	Len() uint64
+	Parse([]byte) error
 }
 
 type Datagram struct {
@@ -70,6 +72,15 @@ type BytePayload struct {
 func (data *BytePayload) Send(w io.Writer) error {
 	_, err := w.Write(data.Payload)
 	return err
+}
+
+func (data *BytePayload) Len() uint64 {
+	return uint64(len(data.Payload))
+}
+
+func (data *BytePayload) Parse(b []byte) error {
+	data.Payload = b
+	return nil
 }
 
 type CompressedPayload struct {
@@ -267,3 +278,11 @@ func (ds *DatagramSender) SendDatagram(data Datagram) error {
 	ds.Unlock()
 	return err
 }
+
+var (
+	_ Payload = (*BytePayload)(nil)
+	_ Payload = (*CompressedPayload)(nil)
+	_ Payload = (*UncompressedPayload)(nil)
+	_ Payload = (*CompressionAssignPayload)(nil)
+	_ Payload = (*CompressionClosePayload)(nil)
+)
