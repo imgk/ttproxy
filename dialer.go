@@ -185,4 +185,7 @@ func (srv Server) dialUDP(conn net.Conn, _ string) (net.Conn, error) {
 	return conn, nil
 }
 
-var _ proxy.Dialer = (*tlsDialer)(nil)
+var (
+	_ proxy.Dialer = (*tlsDialer)(nil)
+	_ proxy.Dialer = (*httpDialer)(nil)
+)
