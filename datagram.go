@@ -10,9 +10,10 @@ import (
 )
 
 type Payload interface {
-	Send(io.Writer) error
+	Append([]byte) []byte
 	Len() uint64
 	Parse([]byte) error
+	Send(io.Writer) error
 }
 
 type Datagram struct {
@@ -65,6 +66,11 @@ func (data *Datagram) Send(w io.Writer) error {
 	return nil
 }
 
+func (data *Datagram) Append(b []byte) []byte {
+	b = quicvarint.Append(quicvarint.Append(b, data.Type), data.Length)
+	return data.Payload.Append(b)
+}
+
 type BytePayload struct {
 	Payload []byte
 }
@@ -81,6 +87,10 @@ func (data *BytePayload) Len() uint64 {
 func (data *BytePayload) Parse(b []byte) error {
 	data.Payload = b
 	return nil
+}
+
+func (data *BytePayload) Append(b []byte) []byte {
+	return append(b, data.Payload...)
 }
 
 type CompressedPayload struct {
@@ -114,6 +124,10 @@ func (data *CompressedPayload) Parse(b []byte) error {
 
 func (data *CompressedPayload) Len() uint64 {
 	return uint64(quicvarint.Len(data.ContextID)) + uint64(len(data.Payload))
+}
+
+func (data *CompressedPayload) Append(b []byte) []byte {
+	return append(quicvarint.Append(b, data.ContextID), data.Payload...)
 }
 
 type UncompressedPayload struct {
@@ -176,6 +190,11 @@ func (data *UncompressedPayload) Len() uint64 {
 		return uint64(quicvarint.Len(data.ContextID)) + 1 + 16 + 2 + uint64(len(data.Payload))
 	}
 	return 0
+}
+
+func (data *UncompressedPayload) Append(b []byte) []byte {
+	return append(append(append(append(quicvarint.Append(b, data.ContextID), byte(data.IPVersion)),
+		data.Addr.AsSlice()...), byte(data.Port>>8), byte(data.Port)), data.Payload...)
 }
 
 type CompressionAssignPayload struct {
@@ -241,6 +260,15 @@ func (data *CompressionAssignPayload) Len() uint64 {
 	return 0
 }
 
+func (data *CompressionAssignPayload) Append(b []byte) []byte {
+	if data.IPVersion != 0 {
+		b = append(append(append(quicvarint.Append(b, data.ContextID),
+			byte(data.IPVersion)), data.Addr.AsSlice()...), byte(data.Port>>8), byte(data.Port))
+	}
+
+	return append(quicvarint.Append(b, data.ContextID), byte(data.IPVersion))
+}
+
 type CompressionClosePayload struct {
 	ContextID uint64
 }
@@ -265,6 +293,10 @@ func (data *CompressionClosePayload) Parse(b []byte) error {
 
 func (data *CompressionClosePayload) Len() uint64 {
 	return uint64(quicvarint.Len(data.ContextID))
+}
+
+func (data *CompressionClosePayload) Append(b []byte) []byte {
+	return quicvarint.Append(b, data.ContextID)
 }
 
 type DatagramSender struct {
