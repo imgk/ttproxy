@@ -32,12 +32,15 @@ func (rm *natmap) Get(addr netip.AddrPort) (*PacketConn, bool) {
 	return nm, ok
 }
 
-func (rm *natmap) Add(addr netip.AddrPort, nm *PacketConn) {
+func (rm *natmap) Add(addr netip.AddrPort, pc *PacketConn) {
 	rm.Lock()
-	rm.RouteMap[addr] = nm
+	rm.RouteMap[addr] = pc
 	rm.Unlock()
 
-	go rm.timedCopy(nm, addr, rm.Timeout)
+	go func() {
+		rm.timedCopy(pc, addr, rm.Timeout)
+		rm.Del(addr)
+	}()
 }
 
 func (rm *natmap) Del(addr netip.AddrPort) {
@@ -48,7 +51,6 @@ func (rm *natmap) Del(addr netip.AddrPort) {
 
 func (rm *natmap) timedCopy(pc *PacketConn, raddr netip.AddrPort, timeout time.Duration) {
 	defer pc.Close()
-	defer rm.Del(raddr)
 
 	bb := make([]byte, 2048)
 	nm := map[uint64]*net.UDPConn{}
