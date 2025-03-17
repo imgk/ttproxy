@@ -262,7 +262,7 @@ func (data *CompressionAssignPayload) Len() uint64 {
 
 func (data *CompressionAssignPayload) Append(b []byte) []byte {
 	if data.IPVersion != 0 {
-		b = append(append(append(quicvarint.Append(b, data.ContextID),
+		return append(append(append(quicvarint.Append(b, data.ContextID),
 			byte(data.IPVersion)), data.Addr.AsSlice()...), byte(data.Port>>8), byte(data.Port))
 	}
 
