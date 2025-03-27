@@ -8,6 +8,8 @@ import (
 )
 
 func (srv *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// only handle HTTP CONNNECT method
+	// ignore other HTTP method
 	if r.Method != http.MethodConnect {
 		// slog.Error("http method error: %v" + r.Method)
 		srv.httpMux.ServeHTTP(w, r)
@@ -16,9 +18,13 @@ func (srv *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	rc := http.NewResponseController(w)
-	rc.Flush()
+	err := rc.Flush()
+	if err != nil {
+		slog.Error(fmt.Sprintf("flush response writer error: %v", err))
+		return
+	}
 
-	conn, _, err := rc.Hijack()
+	conn, bfw, err := rc.Hijack()
 	if err != nil {
 		slog.Error(fmt.Sprintf("hijack error: %v", err))
 		return
@@ -36,6 +42,19 @@ func (srv *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rconn.Close()
+
+	// write all buffered bytes into remote connection
+	if n := bfw.Reader.Buffered(); n > 0 {
+		bb, err := bfw.Reader.Peek(n)
+		if err != nil {
+			return
+		}
+
+		_, err = rconn.Write(bb)
+		if err != nil {
+			return
+		}
+	}
 
 	done := make(chan struct{})
 	go func() {

@@ -2,6 +2,7 @@ package ttproxy
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 
@@ -47,7 +48,8 @@ func (srv Server) relay(conn tproxy.Conn) {
 
 	done := make(chan struct{})
 	go func() {
-		conn.WriteTo(rc)
+		io.Copy(rc, conn)
+		// conn.WriteTo(rc)
 		// copyBuffer(rc, conn, make([]byte, 1024*16))
 		if cw, ok := rc.(interface{ CloseWrite() error }); ok {
 			cw.CloseWrite()
@@ -55,7 +57,8 @@ func (srv Server) relay(conn tproxy.Conn) {
 		done <- struct{}{}
 	}()
 
-	conn.ReadFrom(rc)
+	io.Copy(conn, rc)
+	// conn.ReadFrom(rc)
 	// copyBuffer(conn, rc, make([]byte, 1024*16))
 	conn.CloseWrite()
 	<-done
