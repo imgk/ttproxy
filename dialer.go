@@ -31,6 +31,7 @@ func init() {
 	proxy.RegisterDialerType("https", newHTTPDialer)
 }
 
+// add customized http dialer to golang.org/x/net/proxy
 type httpDialer struct {
 	proxy.Dialer
 
@@ -84,6 +85,7 @@ func (d *httpDialer) Dial(network, addr string) (net.Conn, error) {
 	return conn, nil
 }
 
+// a tls dialer with a proxy.Dialer embedded
 type tlsDialer struct {
 	proxy.Dialer
 	tls.Config
@@ -97,6 +99,7 @@ func (d *tlsDialer) Dial(network, addr string) (net.Conn, error) {
 	return net.Conn(tls.Client(conn, &d.Config)), nil
 }
 
+// a HTTP dialer which utilizes HTTP CONNECT method for TCP and RFC 9298 for UDP
 func (srv Server) Dial(network, addr string) (net.Conn, error) {
 	conn, err := srv.Dialer.Dial("tcp", srv.HostPort)
 	if err != nil {

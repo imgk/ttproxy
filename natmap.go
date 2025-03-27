@@ -12,41 +12,36 @@ import (
 )
 
 type natmap struct {
-	sync.RWMutex
 	Timeout  time.Duration
-	RouteMap map[netip.AddrPort]*PacketConn
+	RouteMap sync.Map
 }
 
 func newNatMap(timeout time.Duration) *natmap {
 	rm := natmap{
 		Timeout: timeout,
 	}
-	rm.RouteMap = map[netip.AddrPort]*PacketConn{}
 	return &rm
 }
 
 func (rm *natmap) Get(addr netip.AddrPort) (*PacketConn, bool) {
-	rm.RLock()
-	nm, ok := rm.RouteMap[addr]
-	rm.RUnlock()
-	return nm, ok
+	v, ok := rm.RouteMap.Load(addr)
+	if ok {
+		return v.(*PacketConn), true
+	}
+	return nil, ok
 }
 
 func (rm *natmap) Add(addr netip.AddrPort, pc *PacketConn) {
-	rm.Lock()
-	rm.RouteMap[addr] = pc
-	rm.Unlock()
+	rm.RouteMap.Store(addr, pc)
 
 	go func() {
 		rm.timedCopy(pc, addr, rm.Timeout)
-		rm.Del(addr)
+		rm.RouteMap.Delete(addr)
 	}()
 }
 
 func (rm *natmap) Del(addr netip.AddrPort) {
-	rm.Lock()
-	delete(rm.RouteMap, addr)
-	rm.Unlock()
+	rm.RouteMap.Delete(addr)
 }
 
 func (rm *natmap) timedCopy(pc *PacketConn, raddr netip.AddrPort, timeout time.Duration) {

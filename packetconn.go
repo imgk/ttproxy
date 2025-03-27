@@ -14,23 +14,15 @@ type PacketConn struct {
 	DatagramSender
 	Conn       net.Conn
 	ContextID  uint64
-	ContextMap struct {
-		sync.RWMutex
-		Map map[uint64]netip.AddrPort
-	}
-	AddrMap struct {
-		sync.RWMutex
-		Map map[netip.AddrPort]uint64
-	}
+	ContextMap sync.Map
+	AddrMap    sync.Map
 
 	firewall atomic.Bool
 }
 
 func newPacketConn(conn net.Conn) *PacketConn {
-	nm := PacketConn{DatagramSender: DatagramSender{w: conn}, Conn: conn, ContextID: 2}
-	nm.ContextMap.Map = map[uint64]netip.AddrPort{}
-	nm.AddrMap.Map = map[netip.AddrPort]uint64{}
-	return &nm
+	pc := PacketConn{DatagramSender: DatagramSender{w: conn}, Conn: conn, ContextID: 2}
+	return &pc
 }
 
 func (nm *PacketConn) Close() error {
@@ -80,38 +72,31 @@ func (nm *PacketConn) Firewall() bool {
 }
 
 func (nm *PacketConn) GetAddr(id uint64) (netip.AddrPort, bool) {
-	nm.ContextMap.RLock()
-	addr, ok := nm.ContextMap.Map[id]
-	nm.ContextMap.RUnlock()
-	return addr, ok
+	addr, ok := nm.ContextMap.Load(id)
+	if ok {
+		return addr.(netip.AddrPort), true
+	}
+	return netip.AddrPort{}, ok
 }
 
 func (nm *PacketConn) GetContextID(addr netip.AddrPort) (uint64, bool) {
-	nm.AddrMap.RLock()
-	id, ok := nm.AddrMap.Map[addr]
-	nm.AddrMap.RUnlock()
-	return id, ok
+	id, ok := nm.AddrMap.Load(addr)
+	if ok {
+		return id.(uint64), true
+	}
+	return 0, ok
 }
 
 func (nm *PacketConn) Add(id uint64, addr netip.AddrPort) {
-	nm.ContextMap.Lock()
-	nm.AddrMap.Lock()
-	nm.ContextMap.Map[id] = addr
-	nm.AddrMap.Map[addr] = id
-	nm.AddrMap.Unlock()
-	nm.ContextMap.Unlock()
+	nm.ContextMap.Store(id, addr)
+	nm.AddrMap.Store(addr, id)
 }
 
 func (nm *PacketConn) Del(id uint64) {
-	nm.ContextMap.Lock()
-	addr, ok := nm.ContextMap.Map[id]
-	delete(nm.ContextMap.Map, id)
+	addr, ok := nm.ContextMap.LoadAndDelete(id)
 	if ok {
-		nm.AddrMap.Lock()
-		delete(nm.AddrMap.Map, addr)
-		nm.AddrMap.Unlock()
+		nm.AddrMap.Delete(addr)
 	}
-	nm.ContextMap.Unlock()
 }
 
 func (pc *PacketConn) WriteToUDPAddrPort(b []byte, raddr netip.AddrPort) (int, error) {
@@ -257,6 +242,7 @@ func (pc *PacketConn) ReadPacket(buf []byte) ([]byte, uint64, error) {
 			dg.Length = pl.Len()
 			dg.Payload = &pl
 
+			// odd context id for server side
 			if pl.ContextID&1 == 1 {
 				// slog.Info(fmt.Sprintf("add new context id: %v, <---> addr: %v", pl.ContextID, netip.AddrPortFrom(pl.Addr, pl.Port)))
 				pc.Add(pl.ContextID, netip.AddrPortFrom(pl.Addr, pl.Port))
@@ -277,6 +263,7 @@ func (pc *PacketConn) ReadPacket(buf []byte) ([]byte, uint64, error) {
 			dg.Length = pl.Len()
 			dg.Payload = &pl
 
+			// odd context id for server side
 			if pl.ContextID&1 == 1 {
 				// delete context id
 				pc.Del(pl.ContextID)

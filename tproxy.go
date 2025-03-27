@@ -86,12 +86,14 @@ func (srv Server) ServeTProxyUDP() error {
 
 		pc, ok := nm.Get(addr)
 		if ok {
+			// write packet to remote connection if found
 			if _, err := pc.WriteToUDPAddrPort(bb[:n], raddr); err != nil {
 				slog.Error(fmt.Sprintf("write from: %v to: %v error: %v", addr, raddr, err))
 			}
 			continue
 		}
 
+		// create new connection for new address
 		slog.Info(fmt.Sprintf("receive new tproxy UDP connection %s <---> %s", addr.String(), raddr.String()))
 
 		conn, err := srv.Dial("udp", raddr.String())
@@ -101,6 +103,8 @@ func (srv Server) ServeTProxyUDP() error {
 		}
 
 		pc = newPacketConn(conn)
+		// enable firewall for default
+		// only transport packets with context id
 		err = pc.SetFirewall(true)
 		if err != nil {
 			pc.Close()
