@@ -48,7 +48,7 @@ func (rm *natmap) timedCopy(pc *PacketConn, raddr netip.AddrPort, timeout time.D
 	defer pc.Close()
 
 	bb := make([]byte, 2048)
-	nm := map[uint64]*net.UDPConn{}
+	nm := map[uint64]tproxy.PacketConn{}
 
 	for {
 		pc.SetReadDeadline(time.Now().Add(timeout))
