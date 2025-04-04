@@ -1,4 +1,4 @@
-package ttproxy
+package datagram
 
 import (
 	"fmt"
@@ -301,12 +301,12 @@ func (data *CompressionClosePayload) Append(b []byte) []byte {
 
 type DatagramSender struct {
 	sync.Mutex
-	w io.Writer
+	W io.Writer
 }
 
 func (ds *DatagramSender) SendDatagram(data Datagram) error {
 	ds.Lock()
-	err := data.Send(ds.w)
+	err := data.Send(ds.W)
 	ds.Unlock()
 	return err
 }

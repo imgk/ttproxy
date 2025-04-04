@@ -7,11 +7,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/imgk/ttproxy/pkg/datagram"
 	"github.com/imgk/ttproxy/pkg/quicvarint"
 )
 
 type PacketConn struct {
-	DatagramSender
+	datagram.DatagramSender
 	Conn       net.Conn
 	ContextID  uint64
 	ContextMap sync.Map
@@ -21,7 +22,7 @@ type PacketConn struct {
 }
 
 func newPacketConn(conn net.Conn) *PacketConn {
-	pc := PacketConn{DatagramSender: DatagramSender{w: conn}, Conn: conn, ContextID: 2}
+	pc := PacketConn{DatagramSender: datagram.DatagramSender{W: conn}, Conn: conn, ContextID: 2}
 	return &pc
 }
 
@@ -32,10 +33,10 @@ func (nm *PacketConn) Close() error {
 func (nm *PacketConn) SetFirewall(ok bool) error {
 	if ok {
 		// enable firewall for UDP bind
-		dg := Datagram{
+		dg := datagram.Datagram{
 			Type: CompressionCloseValue,
 		}
-		pl := &CompressionClosePayload{
+		pl := &datagram.CompressionClosePayload{
 			ContextID: 2,
 		}
 		dg.Length = 1
@@ -47,10 +48,10 @@ func (nm *PacketConn) SetFirewall(ok bool) error {
 		}
 	} else {
 		// disable firewall for UDP bind
-		dg := Datagram{
+		dg := datagram.Datagram{
 			Type: CompressionAssignValue,
 		}
-		pl := &CompressionAssignPayload{
+		pl := &datagram.CompressionAssignPayload{
 			ContextID: 2,
 			IPVersion: 0,
 		}
@@ -102,10 +103,10 @@ func (nm *PacketConn) Del(id uint64) {
 func (pc *PacketConn) WriteToUDPAddrPort(b []byte, raddr netip.AddrPort) (int, error) {
 	id, ok := pc.GetContextID(raddr)
 	if !ok {
-		dg := Datagram{
+		dg := datagram.Datagram{
 			Type: CompressionAssignValue,
 		}
-		pl := &CompressionAssignPayload{}
+		pl := &datagram.CompressionAssignPayload{}
 
 		pc.ContextID += 2
 		pl.ContextID = pc.ContextID
@@ -129,9 +130,9 @@ func (pc *PacketConn) WriteToUDPAddrPort(b []byte, raddr netip.AddrPort) (int, e
 		pc.Add(id, netip.AddrPortFrom(pl.Addr, pl.Port))
 	}
 
-	dg := Datagram{
+	dg := datagram.Datagram{
 		Type: 0,
-		Payload: &CompressedPayload{
+		Payload: &datagram.CompressedPayload{
 			ContextID: id,
 			Payload:   b,
 		},
@@ -152,13 +153,13 @@ func (pc *PacketConn) SetReadDeadline(time time.Time) error {
 
 func (pc *PacketConn) ReadPacket(buf []byte) ([]byte, uint64, error) {
 	for {
-		dg := Datagram{}
+		dg := datagram.Datagram{}
 		err := dg.ReceiveBuffer(pc.Conn, buf)
 		if err != nil {
 			return nil, 0, err
 		}
 
-		bb := dg.Payload.(*BytePayload).Payload
+		bb := dg.Payload.(*datagram.BytePayload).Payload
 
 		switch dg.Type {
 		case 0:
@@ -204,10 +205,10 @@ func (pc *PacketConn) ReadPacket(buf []byte) ([]byte, uint64, error) {
 				return pkt, id, nil
 			}
 
-			dg := Datagram{
+			dg := datagram.Datagram{
 				Type: CompressionAssignValue,
 			}
-			pl := &CompressionAssignPayload{}
+			pl := &datagram.CompressionAssignPayload{}
 
 			pc.ContextID += 2
 			pl.ContextID = pc.ContextID
@@ -232,8 +233,8 @@ func (pc *PacketConn) ReadPacket(buf []byte) ([]byte, uint64, error) {
 
 			return pkt, id, nil
 		case CompressionAssignValue:
-			dg := Datagram{Type: CompressionAssignValue}
-			pl := CompressionAssignPayload{}
+			dg := datagram.Datagram{Type: CompressionAssignValue}
+			pl := datagram.CompressionAssignPayload{}
 
 			err := pl.Parse(bb)
 			if err != nil {
@@ -253,8 +254,8 @@ func (pc *PacketConn) ReadPacket(buf []byte) ([]byte, uint64, error) {
 				}
 			}
 		case CompressionCloseValue:
-			dg := Datagram{Type: CompressionCloseValue}
-			pl := CompressionClosePayload{}
+			dg := datagram.Datagram{Type: CompressionCloseValue}
+			pl := datagram.CompressionClosePayload{}
 
 			err := pl.Parse(bb)
 			if err != nil {
